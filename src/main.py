@@ -6,13 +6,17 @@ import neo4j
 from neo4j import GraphDatabase, Session, Query, Record
 from neo4j.exceptions import ServiceUnavailable
 
-def main(session : Session, out_file=sys.stdout):
+def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
     patients = session.run("MATCH (b:Biological_sample) RETURN b.subjectid AS subject_id").to_df()
     dataset = patients.assign(disease=True)
 
-    dataset.to_csv(out_file, index=False)
+    dataset.to_csv(task_1_file, index=False)
 
-def run(config, out_file=sys.stdout):
+    patients_sick = session.run("MATCH (b:Biological_sample) WHERE NOT EXISTS { MATCH (b)-[:HAS_DISEASE]->(d:Disease {name: 'control'}) } RETURN b.subjectid AS subject_id").to_df()
+    dataset = patients_sick.assign(disease='A')
+    dataset.to_csv(task_2_file, index=False)
+
+def run(config, task_1_file=sys.stdout, task_2_file=sys.stdout):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
@@ -29,7 +33,7 @@ def run(config, out_file=sys.stdout):
 
     # Create a driver session with defined DB
     with driver.session(database=NEO4J_DB) as session:
-        main(session, out_file)
+        main(session, task_1_file, task_2_file)
 
     # Close the driver connection
     driver.close()
