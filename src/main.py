@@ -19,12 +19,12 @@ class Predictor(nn.Module):
     GENE_EMBEDDING_SIZE = 10
 
     def __init__(self, nb_phenotypes, nb_genes, nb_proteins):
-        self.phenotype_encoder = nn.Linear(in_features=nb_phenotypes, out_features=PHENOTYPE_EMBEDDING_SIZE)
-        self.gene_encoder = nn.Linear(in_features=nb_genes, out_features=GENE_EMBEDDING_SIZE)
-        self.protein_encoder = nn.Linear(in_features=nb_proteins, out_features=PROTEIN_EMBEDDING_SIZE)
+        self.phenotype_encoder = nn.Linear(in_features=nb_phenotypes, out_features=Predictor.PHENOTYPE_EMBEDDING_SIZE)
+        self.gene_encoder = nn.Linear(in_features=nb_genes, out_features=Predictor.GENE_EMBEDDING_SIZE)
+        self.protein_encoder = nn.Linear(in_features=nb_proteins, out_features=Predictor.PROTEIN_EMBEDDING_SIZE)
 
         FINAL_EMBEDDING_SIZE=15
-        self.fc1 = nn.Linear(in_features=(PHENOTYPE_EMBEDDING_SIZE+PROTEIN_EMBEDDING_SIZE+GENE_EMBEDDING_SIZE), out_features=FINAL_EMBEDDING_SIZE)
+        self.fc1 = nn.Linear(in_features=(Predictor.PHENOTYPE_EMBEDDING_SIZE+Predictor.PROTEIN_EMBEDDING_SIZE+Predictor.GENE_EMBEDDING_SIZE), out_features=FINAL_EMBEDDING_SIZE)
         self.fc2 = nn.Linear(in_features=FINAL_EMBEDDING_SIZE, out_features=27)
     def forward(self, phenotypes, genes, proteins):
         phenotype_encoding = self.phenotype_encoder(phenotypes)
@@ -81,21 +81,24 @@ def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
 
     disease_per_patient = session.run(f"MATCH (b:Biological_sample)-[:HAS_DISEASE]->(d:Disease) RETURN b.subjectid AS subject_id, d").to_df()
 
-    disease = np.zeros((len(patient_codes),), dtype=np.int8)
+    disease_labels = np.zeros((len(patient_codes),), dtype=np.int8)
     for patient_id, disease in zip(disease_per_patient['subject_id'], disease_per_patient['d']):
         if disease['name'] == 'control':
             icdm = 0
         else:
-            icdm = next(filter(lambda name: name.startswith('ICD10CM:'), disease['synonyms']))
-            icdm = icdm[len('ICD10CM:')]
+            icdm = next(filter(lambda name: name.startswith('ICD10CM:'), disease['synonyms']), None)
+            if icdm is None:
+                icdm = 'A' # TODO
+            else:
+                icdm = icdm[len('ICD10CM:')]
             icdm = ord(icdm) - ord('a') + 1
-        disease[patient_codes[int(patient_id)]] = icdm
+        disease_labels[patient_codes[int(patient_id)]] = icdm
 
-    dataset = TensorDataset(*sparse_datasets.values(), disease)
+    dataset = TensorDataset(*sparse_datasets.values(), torch.tensor(disease_labels))
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [0.9, 0.1])
     train_loader, val_loader = DataLoader(train_dataset), DataLoader(val_dataset)
 
-    predictor = Predictor(**{ 'nb_' + key + 's' : len(value) for key, value in codes.items() })
+    predictor = Predictor(**{ 'nb_' + key + 's' : value.size(1) for key, value in sparse_datasets.items() })
     loss_fn = nn.CrossEntropyLoss()
 
     for epoch in range(10):
