@@ -38,49 +38,45 @@ class Predictor(nn.Module):
         x = nn.functional.softmax(x)
         return x
 
-def make_hugematrix_dataset(patient_constaint='') -> Tuple[Dict[str, torch.Tensor], Dict[int, int], pd.Column]:
-    connection_names = ['HAS_PHENOTYPE', 'HAS_DAMAGE', 'HAS_PROTEIN']
+def make_hugematrix_dataset(session, patient_constraint='') -> Tuple[Dict[str, torch.Tensor], Dict[int, int], pd.Series]:
     # Get all data
     data = dict(
-        patients = session.run("MATCH (b:Biological_sample) "+patient_constaint+" RETURN b.subjectid AS subject_id").to_df()['subject_id'],
-        genes = session.run("MATCH (g:Gene) WHERE EXISTS { (b:Biological_sample)-[:HAS_DAMAGE]->(g) } RETURN g").to_df()['g'],
-        proteins = session.run("MATCH (p:Protein) RETURN p").to_df()['p'],
-        phenotypes = session.run("MATCH (p:Phenotype) RETURN p").to_df()['p'],
+        patient = session.run("MATCH (b:Biological_sample) "+patient_constraint+" RETURN b.subjectid AS subject_id").to_df()['subject_id'],
+        gene = session.run("MATCH (g:Gene) WHERE EXISTS { (b:Biological_sample)-[:HAS_DAMAGE]->(g) } RETURN ID(g) AS id").to_df()['id'],
+        protein = session.run("MATCH (p:Protein) WHERE EXISTS { (b:Biological_sample)-[:HAS_PROTEIN]->(p) } RETURN ID(p) AS id").to_df()['id'],
+        phenotype = session.run("MATCH (p:Phenotype) WHERE EXISTS { (b:Biological_sample)-[:HAS_PHENOTYPE]->(p) } RETURN ID(p) AS id").to_df()['id'],
     )
     # Assign a list index ("code") to each ID
     codes = { key: {} for key in data.keys() }
     for key, data in data.items():
         for index, val in enumerate(data):
-            codes[key][val] = index
-    patient_codes = codes['patients']
-    # Create empty sparse dataset
-    sparse_datasets = dict(
-        phenotype = torch.sparse_coo_tensor(indices=[], values=[], size=(len(patient_codes), len(phenotype_codes)), dtype=bool),
-        gene = torch.sparse_coo_tensor(indices=[], values=[], size=(len(patient_codes), len(gene_codes)), dtype=torch.float32),
-        protein = torch.sparse_coo_tensor(indices=[], values=[], size=(len(patient_codes), len(protein_codes)), dtype=torch.float32),
-    )
-    # Fill sparse datasets
-    for key, connection_name in zip(sparse_datasets.keys(), connection_names):
-        dataset = sparse_datasets[key]
+            codes[key][int(val)] = index
+    patient_codes = codes['patient']
+    # Create sparse datasets
+    sparse_datasets = {}
+    for key, connection_name, dtype in zip(['gene', 'protein', 'phenotype'], ['HAS_DAMAGE', 'HAS_PROTEIN', 'HAS_PHENOTYPE'], [bool, torch.float32, torch.float32]):
         code = codes[key]
         ## Retrieve data from neo4j
         if connection_name == 'HAS_PHENOTYPE':
             edges = session.run(f"MATCH (b:Biological_sample)-[c:{connection_name}]->(p:{key.title()}) RETURN b.subjectid AS subject_id, id(p) AS values").to_df()
-            subject_ids, values, weights = edges['subject_id'], edges['values'], cycle(True)
+            subject_ids, property_ids, weights = edges['subject_id'], edges['values'], cycle([True])
         else:
             edges = session.run(f"MATCH (b:Biological_sample)-[c:{connection_name}]->(p:{key.title()}) RETURN b.subjectid AS subject_id, c.score AS weight, id(p) AS values").to_df()
-            subject_ids, values, weights = edges['subject_id'], edges['values'], edges['weight']
+            subject_ids, property_ids, weights = edges['subject_id'], edges['values'], edges['weight']
 
+        indices, values = [], []
         ## Put data into sparse dataset
-        for subject_id, value, weight in zip(subject_ids, values, weights):
-            subject_id, value = patient_codes[subject_id], code[value]
-            dataset[subject_id, value] = weight
+        for subject_id, property_id, weight in zip(subject_ids, property_ids, weights):
+            subject_id, property_id = patient_codes[int(subject_id)], code[int(property_id)]
+            indices.append([ subject_id, property_id ])
+            values.append(weight)
+        sparse_datasets[key] = torch.sparse_coo_tensor(indices, values, size=(len(patient_codes), len(code)), dtype=dtype)
 
-    return sparse_datasets, patient_codes, data['patients']
+    return sparse_datasets, patient_codes, data['patient']
 
 def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
     diseases = session.run("MATCH (d:Disease) RETURN d").to_df()['d']
-    sparse_datasets, patient_codes, _ = make_hugematrix_dataset(patient_constaint='WHERE EXISTS {MATCH (b)-[:HAS_DISEASE]->[d:Disease]}')
+    sparse_datasets, patient_codes, _ = make_hugematrix_dataset(session, patient_constraint='WHERE EXISTS {MATCH (b)-[:HAS_DISEASE]->(d:Disease)}')
 
     disease_per_patient = session.run(f"MATCH (b:Biological_sample)-[:HAS_DISEASE]->(d:Disease) RETURN b.subjectid AS subject_id, d.synonyms").to_df()
 
@@ -127,7 +123,7 @@ def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
             val_loss = running_loss / (i+1)
         print(f'Epoch {epoch}: LOSS train {train_loss} val {val_loss}')
 
-    sparse_datasets, patient_codes, all_patients = make_hugematrix_dataset(patient_constaint='')
+    sparse_datasets, patient_codes, all_patients = make_hugematrix_dataset(session, patient_constraint='')
     predictions = np.array(size=(len(all_patients),), dtype=np.int8)
     for i in range(len(all_patients)):
         predictions[i] = predictor(*[ series[i] for series in sparse_datasets.values() ])
