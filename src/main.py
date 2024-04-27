@@ -71,7 +71,7 @@ def make_hugematrix_dataset(session, patient_constraint='') -> Tuple[Dict[str, t
             indices.append([ subject_id, property_id ])
             values.append(weight)
         indices = torch.tensor(indices).transpose(0, 1)
-        sparse_datasets[key] = torch.sparse_coo_tensor(indices, values, size=(len(patient_codes), len(code)), dtype=dtype)
+        sparse_datasets[key] = torch.sparse_coo_tensor(indices, values, size=(len(patient_codes), len(code)), dtype=dtype).to_dense()
 
     return sparse_datasets, patient_codes, data['patient']
 
@@ -81,7 +81,7 @@ def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
 
     disease_per_patient = session.run(f"MATCH (b:Biological_sample)-[:HAS_DISEASE]->(d:Disease) RETURN b.subjectid AS subject_id, d").to_df()
 
-    disease_labels = np.zeros((len(patient_codes),), dtype=np.int8)
+    disease_labels = np.zeros((len(patient_codes),), dtype=int)
     for patient_id, disease in zip(disease_per_patient['subject_id'], disease_per_patient['d']):
         if disease['name'] == 'control':
             icdm = 0
@@ -91,14 +91,15 @@ def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
                 icdm = 'A' # TODO
             else:
                 icdm = icdm[len('ICD10CM:')]
-            icdm = ord(icdm) - ord('a') + 1
+            icdm = ord(icdm) - ord('A') + 1
         disease_labels[patient_codes[int(patient_id)]] = icdm
 
-    dataset = TensorDataset(*sparse_datasets.values(), torch.tensor(disease_labels))
+    dataset = TensorDataset(*sparse_datasets.values(), torch.tensor(disease_labels, dtype=torch.long))
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [0.9, 0.1])
     train_loader, val_loader = DataLoader(train_dataset), DataLoader(val_dataset)
 
     predictor = Predictor(**{ 'nb_' + key + 's' : value.size(1) for key, value in sparse_datasets.items() })
+    optimizer = torch.optim.Adam(predictor.parameters(), lr=0.01)
     loss_fn = nn.CrossEntropyLoss()
 
     for epoch in range(10):
