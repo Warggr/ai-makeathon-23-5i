@@ -53,6 +53,7 @@ docker logs <containerID>
 # Push the new image to the registry
 ```shell
 pip install featurecloud
+docker login featurecloud.ai
 make push
 ```
 
