@@ -19,6 +19,7 @@ class Predictor(nn.Module):
     GENE_EMBEDDING_SIZE = 10
 
     def __init__(self, nb_phenotypes, nb_genes, nb_proteins):
+        super().__init__()
         self.phenotype_encoder = nn.Linear(in_features=nb_phenotypes, out_features=Predictor.PHENOTYPE_EMBEDDING_SIZE)
         self.gene_encoder = nn.Linear(in_features=nb_genes, out_features=Predictor.GENE_EMBEDDING_SIZE)
         self.protein_encoder = nn.Linear(in_features=nb_proteins, out_features=Predictor.PROTEIN_EMBEDDING_SIZE)
@@ -54,12 +55,12 @@ def make_hugematrix_dataset(session, patient_constraint='') -> Tuple[Dict[str, t
     patient_codes = codes['patient']
     # Create sparse datasets
     sparse_datasets = {}
-    for key, connection_name, dtype in zip(['gene', 'protein', 'phenotype'], ['HAS_DAMAGE', 'HAS_PROTEIN', 'HAS_PHENOTYPE'], [bool, torch.float32, torch.float32]):
+    for key, connection_name, dtype in zip(['gene', 'protein', 'phenotype'], ['HAS_DAMAGE', 'HAS_PROTEIN', 'HAS_PHENOTYPE'], [torch.float32, torch.float32, torch.float32]):
         code = codes[key]
         ## Retrieve data from neo4j
         if connection_name == 'HAS_PHENOTYPE':
             edges = session.run(f"MATCH (b:Biological_sample)-[c:{connection_name}]->(p:{key.title()}) {patient_constraint} RETURN b.subjectid AS subject_id, id(p) AS values").to_df()
-            subject_ids, property_ids, weights = edges['subject_id'], edges['values'], cycle([True])
+            subject_ids, property_ids, weights = edges['subject_id'], edges['values'], cycle([1.0])
         else:
             edges = session.run(f"MATCH (b:Biological_sample)-[c:{connection_name}]->(p:{key.title()}) {patient_constraint} RETURN b.subjectid AS subject_id, c.score AS weight, id(p) AS values").to_df()
             subject_ids, property_ids, weights = edges['subject_id'], edges['values'], edges['weight']
@@ -94,7 +95,7 @@ def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
             icdm = ord(icdm) - ord('A') + 1
         disease_labels[patient_codes[int(patient_id)]] = icdm
 
-    dataset = TensorDataset(*sparse_datasets.values(), torch.tensor(disease_labels, dtype=torch.long))
+    dataset = TensorDataset(sparse_datasets['phenotype'], sparse_datasets['gene'], sparse_datasets['protein'], torch.tensor(disease_labels, dtype=torch.long))
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [0.9, 0.1])
     train_loader, val_loader = DataLoader(train_dataset), DataLoader(val_dataset)
 
@@ -103,7 +104,7 @@ def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
     loss_fn = nn.CrossEntropyLoss()
 
     for epoch in range(10):
-        model.train(True)
+        predictor.train(True)
         running_loss = 0.0
         for i, data in enumerate(train_loader):
             *inputs, disease = data
@@ -115,7 +116,7 @@ def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
             loss.backward()
             optimizer.step()
         train_loss = running_loss / (i+1)
-        model.eval()
+        predictor.eval()
 
         with torch.no_grad():
             running_loss = 0.0
