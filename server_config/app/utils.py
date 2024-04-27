@@ -17,12 +17,7 @@ def read_config(file_path=f"{INPUT_DIR}/config.yml"):
     except FileNotFoundError:
         logger.info(f"Config file '{file_path}' not found.")
 
-
-def write_output(*args, file_path=f"{OUTPUT_DIR}/results.txt", **kwargs):
-    # TODO optimize: do not reopen the file every time
-    with open(file_path, "w") as text_file:
-        print(*args, **kwargs, file=text_file)
-
+OUTPUT_FILENAME=f"{OUTPUT_DIR}/results.txt"
 
 def convert_to_np(data):
     if isinstance(data, (pd.Series, pd.DataFrame)):

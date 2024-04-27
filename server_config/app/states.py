@@ -1,6 +1,6 @@
 from FeatureCloud.app.engine.app import AppState, app_state, Role
 
-from utils import read_config,write_output
+from utils import read_config, OUTPUT_FILENAME
 
 from src import run
 
@@ -12,5 +12,6 @@ class ExecuteState(AppState):
         self.register_transition('terminal', Role.BOTH)
 
     def run(self):
-        run(config, write_output)
+        with open(OUTPUT_FILENAME, 'w') as out_file:
+            run(config, out_file)
         return 'terminal'
