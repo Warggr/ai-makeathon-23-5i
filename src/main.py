@@ -142,10 +142,10 @@ def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
     datasetA = pd.DataFrame({ 'subject_id': all_patients, 'disease': predictions })
     datasetB = datasetA[datasetA['disease'] != 0]
 
-    datasetA['disease'].apply(lambda charcode: charcode != 0)
+    datasetA['disease'] = datasetA['disease'].apply(lambda charcode: charcode != 0)
     datasetA.to_csv(task_1_file, index=False)
 
-    datasetB['disease'].apply(lambda charcode: chr(charcode-1))
+    datasetB['disease'] = datasetB['disease'].apply(lambda charcode: chr(charcode-1+ord('A')))
     datasetB.to_csv(task_2_file, index=False)
 
 def run(config, task_1_file=sys.stdout, task_2_file=sys.stdout):
