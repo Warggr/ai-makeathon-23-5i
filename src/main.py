@@ -11,7 +11,8 @@ from sklearn.model_selection import train_test_split, cross_validate
 from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.metrics import confusion_matrix, f1_score
 from sklearn.multioutput import MultiOutputClassifier
-from sklearn.utils.multiclass import type_of_target
+
+import featurecloud
 
 mlb = MultiLabelBinarizer()
 all_ids = None
@@ -89,8 +90,8 @@ def random_forest(features_df, labels_df):
 
     X_train, X_test, y_train, y_test = train_test_split(X,y, test_size=0.2, random_state=27)
     rf_classifier = RandomForestClassifier(class_weight='balanced',
-        n_estimators=500, max_features='auto', min_samples_split=4,
-        max_depth=20,warm_start=True, random_state=27)
+        n_estimators=500, min_samples_split=4,
+        max_depth=20, random_state=27)
     classifier = MultiOutputClassifier(rf_classifier)
     classifier.fit(X_train, y_train)
 
