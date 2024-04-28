@@ -12,30 +12,34 @@ from neo4j.exceptions import ServiceUnavailable
 from typing import Dict, Tuple
 from itertools import cycle
 
+class hyperparameters: # namespace
+    epochs = 30
+    lr = 0.1
+    PHENOTYPE_EMBEDDING_SIZE = 10
+    GENE_EMBEDDING_SIZE = 10
+    PROTEIN_EMBEDDING_SIZE = 10
+    FINAL_EMBEDDING_SIZE = 15
+
+hyperparameters.TOTAL_EMBEDDING_SIZE = (hyperparameters.PHENOTYPE_EMBEDDING_SIZE+hyperparameters.PROTEIN_EMBEDDING_SIZE+hyperparameters.PROTEIN_EMBEDDING_SIZE)
 
 class Predictor(nn.Module):
-    PHENOTYPE_EMBEDDING_SIZE = 10
-    PROTEIN_EMBEDDING_SIZE = 10
-    GENE_EMBEDDING_SIZE = 10
-
     def __init__(self, nb_phenotypes, nb_genes, nb_proteins):
         super().__init__()
-        self.phenotype_encoder = nn.Linear(in_features=nb_phenotypes, out_features=Predictor.PHENOTYPE_EMBEDDING_SIZE)
-        self.gene_encoder = nn.Linear(in_features=nb_genes, out_features=Predictor.GENE_EMBEDDING_SIZE)
-        self.protein_encoder = nn.Linear(in_features=nb_proteins, out_features=Predictor.PROTEIN_EMBEDDING_SIZE)
+        self.phenotype_encoder = nn.Linear(in_features=nb_phenotypes, out_features=hyperparameters.PHENOTYPE_EMBEDDING_SIZE)
+        self.gene_encoder = nn.Linear(in_features=nb_genes, out_features=hyperparameters.GENE_EMBEDDING_SIZE)
+        self.protein_encoder = nn.Linear(in_features=nb_proteins, out_features=hyperparameters.PROTEIN_EMBEDDING_SIZE)
 
-        FINAL_EMBEDDING_SIZE=15
-        self.fc1 = nn.Linear(in_features=(Predictor.PHENOTYPE_EMBEDDING_SIZE+Predictor.PROTEIN_EMBEDDING_SIZE+Predictor.GENE_EMBEDDING_SIZE), out_features=FINAL_EMBEDDING_SIZE)
-        self.fc2 = nn.Linear(in_features=FINAL_EMBEDDING_SIZE, out_features=27)
+        self.fc1 = nn.Linear(in_features=hyperparameters.TOTAL_EMBEDDING_SIZE, out_features=hyperparameters.FINAL_EMBEDDING_SIZE)
+        self.fc2 = nn.Linear(in_features=hyperparameters.FINAL_EMBEDDING_SIZE, out_features=27)
     def forward(self, phenotypes, genes, proteins):
         phenotype_encoding = self.phenotype_encoder(phenotypes)
         gene_encoding = self.gene_encoder(genes)
         protein_encoding = self.protein_encoder(proteins)
-        encoding = torch.concat(phenotype_encoding, gene_encoding, protein_encoding)
-        encoding = nn.functional.relu(encoding)
-        x = self.fc1(encoding)
+        encoding = torch.concat((phenotype_encoding, gene_encoding, protein_encoding), dim=1)
+        x = nn.functional.relu(encoding)
+        x = self.fc1(x)
         x = nn.functional.relu(x)
-        x = self.fc2(encoding)
+        x = self.fc2(x)
         x = nn.functional.softmax(x)
         return x
 
@@ -43,9 +47,9 @@ def make_hugematrix_dataset(session, patient_constraint='') -> Tuple[Dict[str, t
     # Get all data
     data = dict(
         patient = session.run("MATCH (b:Biological_sample) "+patient_constraint+" RETURN b.subjectid AS subject_id").to_df()['subject_id'],
+        phenotype = session.run("MATCH (p:Phenotype) WHERE EXISTS { (b:Biological_sample)-[:HAS_PHENOTYPE]->(p) } RETURN ID(p) AS id").to_df()['id'],
         gene = session.run("MATCH (g:Gene) WHERE EXISTS { (b:Biological_sample)-[:HAS_DAMAGE]->(g) } RETURN ID(g) AS id").to_df()['id'],
         protein = session.run("MATCH (p:Protein) WHERE EXISTS { (b:Biological_sample)-[:HAS_PROTEIN]->(p) } RETURN ID(p) AS id").to_df()['id'],
-        phenotype = session.run("MATCH (p:Phenotype) WHERE EXISTS { (b:Biological_sample)-[:HAS_PHENOTYPE]->(p) } RETURN ID(p) AS id").to_df()['id'],
     )
     # Assign a list index ("code") to each ID
     codes = { key: {} for key in data.keys() }
@@ -55,7 +59,7 @@ def make_hugematrix_dataset(session, patient_constraint='') -> Tuple[Dict[str, t
     patient_codes = codes['patient']
     # Create sparse datasets
     sparse_datasets = {}
-    for key, connection_name, dtype in zip(['gene', 'protein', 'phenotype'], ['HAS_DAMAGE', 'HAS_PROTEIN', 'HAS_PHENOTYPE'], [torch.float32, torch.float32, torch.float32]):
+    for key, connection_name, dtype in zip(['phenotype', 'gene', 'protein'], ['HAS_PHENOTYPE', 'HAS_DAMAGE', 'HAS_PROTEIN'], [torch.float32, torch.float32, torch.float32]):
         code = codes[key]
         ## Retrieve data from neo4j
         if connection_name == 'HAS_PHENOTYPE':
@@ -100,15 +104,15 @@ def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
     train_loader, val_loader = DataLoader(train_dataset), DataLoader(val_dataset)
 
     predictor = Predictor(**{ 'nb_' + key + 's' : value.size(1) for key, value in sparse_datasets.items() })
-    optimizer = torch.optim.Adam(predictor.parameters(), lr=0.01)
+    optimizer = torch.optim.Adam(predictor.parameters(), lr=hyperparameters.lr)
     loss_fn = nn.CrossEntropyLoss()
 
-    for epoch in range(10):
+    for epoch in range(hyperparameters.epochs):
         predictor.train(True)
         running_loss = 0.0
         for i, data in enumerate(train_loader):
             *inputs, disease = data
-            disease = nn.functional.one_hot(disease,num_classes=27)
+            disease = nn.functional.one_hot(disease,num_classes=27).float()
             optimizer.zero_grad()
             prediction = predictor(*inputs)
             loss = loss_fn(prediction, disease)
@@ -122,7 +126,7 @@ def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
             running_loss = 0.0
             for i, data in enumerate(val_loader):
                 *inputs, disease = data
-                disease = nn.functional.one_hot(disease,num_classes=27)
+                disease = nn.functional.one_hot(disease,num_classes=27).float()
                 prediction = predictor(*inputs)
                 loss = loss_fn(prediction, disease)
                 running_loss += loss
