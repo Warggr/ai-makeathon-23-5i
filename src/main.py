@@ -13,7 +13,7 @@ from typing import Dict, Tuple
 from itertools import cycle
 
 class hyperparameters: # namespace
-    epochs = 30
+    epochs = 4
     lr = 0.1
     PHENOTYPE_EMBEDDING_SIZE = 10
     GENE_EMBEDDING_SIZE = 10
@@ -134,14 +134,17 @@ def main(session : Session, task_1_file=sys.stdout, task_2_file=sys.stdout):
         print(f'Epoch {epoch}: LOSS train {train_loss} val {val_loss}')
 
     sparse_datasets, patient_codes, all_patients = make_hugematrix_dataset(session, patient_constraint='')
-    predictions = np.zeros((len(all_patients),), dtype=np.int8)
-    for i in range(len(all_patients)):
-        predictions[i] = predictor(*[ series[i] for series in sparse_datasets.values() ])
+    predictions = np.zeros((len(all_patients),), dtype=int)
+    with torch.no_grad():
+        for i, row in enumerate(zip(sparse_datasets['phenotype'], sparse_datasets['gene'], sparse_datasets['protein'])):
+            predictions[i] = torch.argmax(predictor(*[ tensor.unsqueeze(0) for tensor in row ]))
 
     datasetA = pd.DataFrame({ 'subject_id': all_patients, 'disease': predictions })
+    datasetB = datasetA[datasetA['disease'] != 0]
+
+    datasetA['disease'].apply(lambda charcode: charcode != 0)
     datasetA.to_csv(task_1_file, index=False)
 
-    datasetB = datasetA[datasetA['disease'] != 0]
     datasetB['disease'].apply(lambda charcode: chr(charcode-1))
     datasetB.to_csv(task_2_file, index=False)
 
