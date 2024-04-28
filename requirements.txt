@@ -11,4 +11,4 @@ neo4j==5.17.0
 requests==2.31.0
 python-dotenv==1.0.1
 pyyaml==6.0.1
-featurecloud==0.0.29
+featurecloud==0.0.30
