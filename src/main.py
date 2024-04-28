@@ -175,4 +175,8 @@ if __name__ == "__main__":
     file_path = './config.yml' # TODO
     with open(file_path, "r") as config_file:
         config = yaml.safe_load(config_file)
-    run(config)
+    if len(sys.argv) == 3:
+        file1, file2 = open(sys.argv[1], 'w'), open(sys.argv[2], 'w')
+    else:
+        file1, file2 = sys.stdout, sys.stdout
+    run(config, file1, file2)
